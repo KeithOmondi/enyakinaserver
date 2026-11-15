@@ -17,7 +17,7 @@ import { createHash } from 'node:crypto';
 import { existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 import type { PoolClient } from 'pg';
-import { pool } from '../config/db';
+import { migrationPool } from '../config/db';
 
 export const MIGRATIONS_DIR = path.join(__dirname, 'migrations');
 const LOCK_KEY = 7_331_001; // arbitrary constant, unique to this app
@@ -105,7 +105,7 @@ function verifyChecksums(files: MigrationFile[], applied: Map<string, AppliedRow
 export async function migrateUp(options: MigrateOptions = {}): Promise<string[]> {
   const { dir, table, log } = resolveOptions(options);
   const files = readMigrationFiles(dir);
-  const client = await pool.connect();
+  const client = await migrationPool().connect();
   const ran: string[] = [];
   try {
     await client.query('SELECT pg_advisory_lock($1)', [LOCK_KEY]);
@@ -148,7 +148,7 @@ export async function migrateUp(options: MigrateOptions = {}): Promise<string[]>
 export async function migrationStatus(options: MigrateOptions = {}): Promise<void> {
   const { dir, table, log } = resolveOptions(options);
   const files = readMigrationFiles(dir);
-  const client = await pool.connect();
+  const client = await migrationPool().connect();
   try {
     await ensureMigrationsTable(client, table);
     const applied = await getApplied(client, table);
@@ -205,7 +205,7 @@ async function main(): Promise<void> {
     console.error((err as Error).message);
     process.exitCode = 1;
   } finally {
-    await pool.end();
+    await migrationPool().end();
   }
 }
 

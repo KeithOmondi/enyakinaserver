@@ -16,6 +16,8 @@ const envSchema = z.object({
 
   DATABASE_URL: z.string().url(),
   DB_POOL_MAX: z.coerce.number().int().positive().default(10),
+  /** Direct (unpooled) connection string used only by migrations. Set it when DATABASE_URL is a pooler. */
+  MIGRATE_DATABASE_URL: optional(z.string().trim().url()),
   DB_SSL: boolString.default('false'),
 
   JWT_ACCESS_SECRET: z.string().min(32, 'JWT_ACCESS_SECRET must be at least 32 characters'),

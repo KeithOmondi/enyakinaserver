@@ -22,24 +22,49 @@ types.setTypeParser(20, (val) => {
 types.setTypeParser(1700, (val) => Number(val));
 types.setTypeParser(1082, (val) => val);
 
-export const pool = new Pool({
-  connectionString: env.DATABASE_URL,
-  max: env.DB_POOL_MAX,
-  ssl: env.DB_SSL ? { rejectUnauthorized: true } : undefined,
-  idleTimeoutMillis: 30_000,
-  connectionTimeoutMillis: 5_000,
-  application_name: 'pos-api',
-  // Every session stores and compares timestamps in UTC; reports convert to
-  // BUSINESS_TIMEZONE explicitly in SQL. The timeouts stop a stuck query or an
-  // abandoned transaction from holding row locks (and so blocking sales) forever.
-  options:
-    '-c timezone=UTC -c statement_timeout=30000 -c idle_in_transaction_session_timeout=60000',
-});
+/**
+ * IMPORTANT: no startup parameters (the `options` / `statement_timeout` connection settings)
+ * may be sent. Managed poolers such as Neon's "-pooler" endpoint (PgBouncer) reject them and
+ * the whole API fails to connect. Per-session settings are sent as ordinary statements instead:
+ * the time zone below, and the statement / idle-in-transaction timeouts inside each
+ * transaction (see db/transaction.ts, which uses SET LOCAL and so also works through a pooler).
+ */
+function createPool(connectionString: string, queryTimeoutMs: number): Pool {
+  const p = new Pool({
+    connectionString,
+    max: env.DB_POOL_MAX,
+    ssl: env.DB_SSL ? { rejectUnauthorized: true } : undefined,
+    idleTimeoutMillis: 30_000,
+    connectionTimeoutMillis: 5_000,
+    // Client-side backstop: give up waiting on a query after this long (0 = never).
+    query_timeout: queryTimeoutMs,
+  });
+  p.on('connect', (client) => {
+    // Timestamps are stored and compared in UTC; reports convert to BUSINESS_TIMEZONE
+    // explicitly in SQL. Best effort: UTC is also the default on Neon and Docker Postgres.
+    client.query("SET TIME ZONE 'UTC'").catch(() => undefined);
+  });
+  p.on('error', (err) => {
+    // An idle client errored (e.g. DB restarted). Log; the pool will replace it.
+    console.error('[db] idle client error', err.message);
+  });
+  return p;
+}
 
-pool.on('error', (err) => {
-  // An idle client errored (e.g. DB restarted). Log; the pool will replace it.
-  console.error('[db] idle client error', err.message);
-});
+export const pool = createPool(env.DATABASE_URL, 30_000);
+
+let directPool: Pool | null = null;
+
+/**
+ * The pool migrations and seeding use. Migrations take a session-level advisory lock, which a
+ * transaction pooler (PgBouncer) cannot honour, so on managed hosting set MIGRATE_DATABASE_URL
+ * to the DIRECT (unpooled) connection string. Without it the normal pool is used.
+ */
+export function migrationPool(): Pool {
+  if (!env.MIGRATE_DATABASE_URL) return pool;
+  directPool ??= createPool(env.MIGRATE_DATABASE_URL, 0);
+  return directPool;
+}
 
 /**
  * Anything that can run a query: the pool itself or a transaction client.
@@ -73,4 +98,5 @@ export async function checkDbConnection(): Promise<void> {
 
 export async function closePool(): Promise<void> {
   await pool.end();
+  if (directPool) await directPool.end();
 }

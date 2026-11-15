@@ -93,6 +93,28 @@ describe('withTransaction', () => {
   });
 });
 
+describe('connection settings (managed poolers such as Neon reject startup parameters)', () => {
+  it('sends no startup parameters when connecting', () => {
+    const opts = pool.options as Record<string, unknown>;
+    expect(opts.options).toBeUndefined(); // -c statement_timeout=... was rejected by Neon's pooler
+    expect(opts.statement_timeout).toBeUndefined();
+    expect(opts.idle_in_transaction_session_timeout).toBeUndefined();
+  });
+
+  it('still bounds every transaction with timeouts, without startup parameters', async () => {
+    const outside = await pool.query('SHOW statement_timeout');
+    expect(outside.rows[0].statement_timeout).toBe('0'); // not set session-wide
+    const inside = await withTransaction(async (c) => {
+      const a = await c.query('SHOW statement_timeout');
+      const b = await c.query('SHOW idle_in_transaction_session_timeout');
+      return [a.rows[0].statement_timeout, b.rows[0].idle_in_transaction_session_timeout];
+    });
+    expect(inside).toEqual(['30s', '1min']);
+    // ...and the setting does not leak into later users of the same pooled connection.
+    expect((await pool.query('SHOW statement_timeout')).rows[0].statement_timeout).toBe('0');
+  });
+});
+
 describe('migration runner', () => {
   const dir = mkdtempSync(path.join(tmpdir(), 'mig-'));
   const opts = { dir, table: '_schema_migrations_probe', log: silent };

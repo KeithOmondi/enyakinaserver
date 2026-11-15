@@ -24,6 +24,10 @@ export async function withTransaction<T>(
     await client.query(
       options.isolationLevel ? `BEGIN ISOLATION LEVEL ${options.isolationLevel}` : 'BEGIN',
     );
+    // Timeouts that stop a stuck query or an abandoned transaction from holding row locks (and
+    // so blocking sales) forever. SET LOCAL lasts for this transaction only, which is also what
+    // makes it work through a transaction pooler.
+    await client.query('SET LOCAL statement_timeout = 30000; SET LOCAL idle_in_transaction_session_timeout = 60000');
     const result = await fn(client);
     await client.query('COMMIT');
     return result;

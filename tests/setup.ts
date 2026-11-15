@@ -35,3 +35,6 @@ for (const key of ['R2_ACCOUNT_ID', 'R2_ACCESS_KEY_ID', 'R2_SECRET_ACCESS_KEY', 
 process.env.MPESA_MODE = 'off';
 process.env.MPESA_SIM_DELAY_MS = '60';
 process.env.MPESA_SIM_TIMEOUT_SECONDS = '2';
+
+// Never let a developer's .env point migrations at a real database during tests.
+process.env.MIGRATE_DATABASE_URL = '';
