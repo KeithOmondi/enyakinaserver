@@ -5,13 +5,33 @@
  */
 import 'dotenv/config';
 
+const LOCAL_HOSTS = new Set(['localhost', '127.0.0.1', '::1', '[::1]']);
+
+/**
+ * Tests EMPTY their database, so they may only ever run against a local one:
+ *   1. TEST_DATABASE_URL, if set (your choice, name must end in _test);
+ *   2. the same server as DATABASE_URL with database "pos_test", but only when that server is local;
+ *   3. the local Docker database (POS_DB_PASSWORD from .env) on localhost:5433.
+ * A remote DATABASE_URL (staging, Neon, production) is never used, so a production .env cannot
+ * be pointed at by accident.
+ */
 function testDatabaseUrl(): string {
   if (process.env.TEST_DATABASE_URL) return process.env.TEST_DATABASE_URL;
   const base = process.env.DATABASE_URL;
-  if (!base) throw new Error('Set TEST_DATABASE_URL (or DATABASE_URL in .env) to run tests');
-  const url = new URL(base);
-  url.pathname = '/pos_test';
-  return url.toString();
+  if (base) {
+    const url = new URL(base);
+    if (LOCAL_HOSTS.has(url.hostname)) {
+      url.pathname = '/pos_test';
+      return url.toString();
+    }
+  }
+  if (process.env.POS_DB_PASSWORD) {
+    return `postgres://pos:${encodeURIComponent(process.env.POS_DB_PASSWORD)}@localhost:5433/pos_test`;
+  }
+  throw new Error(
+    'DATABASE_URL is not a local database, so the tests will not derive a test database from it. ' +
+      'Set TEST_DATABASE_URL to a local throwaway database (its name must end in _test).',
+  );
 }
 
 const url = testDatabaseUrl();

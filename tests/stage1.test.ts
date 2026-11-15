@@ -95,7 +95,7 @@ describe('withTransaction', () => {
 
 describe('connection settings (managed poolers such as Neon reject startup parameters)', () => {
   it('sends no startup parameters when connecting', () => {
-    const opts = pool.options as Record<string, unknown>;
+    const opts = pool.options as unknown as Record<string, unknown>;
     expect(opts.options).toBeUndefined(); // -c statement_timeout=... was rejected by Neon's pooler
     expect(opts.statement_timeout).toBeUndefined();
     expect(opts.idle_in_transaction_session_timeout).toBeUndefined();

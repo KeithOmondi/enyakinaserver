@@ -22,7 +22,9 @@ services:
         value: 15m
       - key: JWT_REFRESH_TTL_DAYS
         value: "7"
-      - key: DATABASE_URL
+      - key: DATABASE_URL # Neon POOLED string (host contains -pooler): used by the running API
+        sync: false
+      - key: MIGRATE_DATABASE_URL # Neon DIRECT string (no -pooler): used only by migrations
         sync: false
       - key: JWT_ACCESS_SECRET
         sync: false
