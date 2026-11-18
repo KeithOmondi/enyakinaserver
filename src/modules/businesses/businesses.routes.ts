@@ -5,7 +5,7 @@ import { env } from '../../config/env';
 import { ctx, requireRole, tenantAuth } from '../../middleware/auth';
 import { validate } from '../../middleware/validate';
 import { audit, auditFromReq } from '../../services/audit';
-import { mpesaMode } from '../../services/mpesa/types';
+import { mpesaModeFor } from '../../services/mpesa/credentials';
 import { storageConfigured } from '../../services/storage';
 import { AppError } from '../../utils/AppError';
 import { asyncHandler } from '../../utils/asyncHandler';
@@ -52,7 +52,8 @@ async function current(id: string): Promise<BusinessRow> {
 businessesRouter.get(
   '/current',
   asyncHandler(async (req, res) => {
-    res.json({ ...(await current(ctx(req).businessId)), timezone: env.BUSINESS_TIMEZONE, currency: 'KES', imagesEnabled: storageConfigured(), mpesaMode: mpesaMode() });
+    const b = await current(ctx(req).businessId);
+    res.json({ ...b, timezone: env.BUSINESS_TIMEZONE, currency: 'KES', imagesEnabled: storageConfigured(), mpesaMode: mpesaModeFor(b.code) });
   }),
 );
 
@@ -80,6 +81,7 @@ businessesRouter.patch(
       ],
     );
     await audit(auditFromReq(req, 'business_updated', 'business', businessId, { before, after: b }));
-    res.json({ ...(await current(businessId)), timezone: env.BUSINESS_TIMEZONE, currency: 'KES', imagesEnabled: storageConfigured(), mpesaMode: mpesaMode() });
+    const updated = await current(businessId);
+    res.json({ ...updated, timezone: env.BUSINESS_TIMEZONE, currency: 'KES', imagesEnabled: storageConfigured(), mpesaMode: mpesaModeFor(updated.code) });
   }),
 );

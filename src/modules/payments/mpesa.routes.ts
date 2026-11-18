@@ -5,7 +5,6 @@ import { isTest } from '../../config/env';
 import { ctx, requireRole, tenantAuth } from '../../middleware/auth';
 import { validate } from '../../middleware/validate';
 import { auditFromReq } from '../../services/audit';
-import { mpesaMode } from '../../services/mpesa/types';
 import { asyncHandler } from '../../utils/asyncHandler';
 import { pageQuery, queryBool, uuid } from '../../utils/pagination';
 import * as service from './mpesa.service';
@@ -50,9 +49,9 @@ const listQuery = z.object({
 });
 
 // Which payment mode is active (the till uses this to show or hide the prompt button).
-mpesaRouter.get('/mode', ...tenantAuth, (_req, res) => {
-  res.json({ mode: mpesaMode() });
-});
+mpesaRouter.get('/mode', ...tenantAuth, asyncHandler(async (req, res) => {
+  res.json({ mode: await service.modeForBusiness(ctx(req).businessId) });
+}));
 
 // Admin log: every prompt, with "paid but not on any sale" flagged.
 mpesaRouter.get(

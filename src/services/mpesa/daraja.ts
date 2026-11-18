@@ -1,4 +1,5 @@
 import { env } from '../../config/env';
+import { credsFor } from './credentials';
 import { AppError } from '../../utils/AppError';
 import { outcomeFromResult, type MpesaProvider, type StkOutcome } from './types';
 
@@ -19,17 +20,10 @@ interface Config {
   baseUrl: string;
 }
 
-function config(): Config {
-  // The env check guarantees these exist when MPESA_MODE=daraja.
-  return {
-    consumerKey: env.MPESA_CONSUMER_KEY!,
-    consumerSecret: env.MPESA_CONSUMER_SECRET!,
-    shortcode: env.MPESA_SHORTCODE!,
-    passkey: env.MPESA_PASSKEY!,
-    partyB: env.MPESA_PARTY_B ?? env.MPESA_SHORTCODE!,
-    type: env.MPESA_TRANSACTION_TYPE,
-    baseUrl: BASE[env.MPESA_ENV],
-  };
+function config(businessCode?: string): Config {
+  const c = credsFor(businessCode);
+  if (!c) throw new AppError(409, 'CONFLICT', 'M-Pesa prompts are not set up for this business yet');
+  return { ...c, baseUrl: BASE[env.MPESA_ENV] };
 }
 
 /** YYYYMMDDHHmmss in East Africa Time, as Daraja expects. */
@@ -46,10 +40,12 @@ export function darajaPassword(shortcode: string, passkey: string, timestamp: st
   return Buffer.from(`${shortcode}${passkey}${timestamp}`).toString('base64');
 }
 
-let token: { value: string; expiresAt: number } | null = null;
+// One access token per Daraja app (consumer key), since each business may use its own.
+const tokens = new Map<string, { value: string; expiresAt: number }>();
 
 async function accessToken(c: Config): Promise<string> {
-  if (token && token.expiresAt > Date.now() + 30_000) return token.value;
+  const cached = tokens.get(c.consumerKey);
+  if (cached && cached.expiresAt > Date.now() + 30_000) return cached.value;
   const res = await fetch(`${c.baseUrl}/oauth/v1/generate?grant_type=client_credentials`, {
     headers: { Authorization: `Basic ${Buffer.from(`${c.consumerKey}:${c.consumerSecret}`).toString('base64')}` },
     signal: AbortSignal.timeout(15_000),
@@ -59,8 +55,8 @@ async function accessToken(c: Config): Promise<string> {
     throw new AppError(502, 'INTERNAL_ERROR', 'Could not reach M-Pesa. Check the Daraja credentials on the server.');
   }
   const body = (await res.json()) as { access_token: string; expires_in: string };
-  token = { value: body.access_token, expiresAt: Date.now() + Number(body.expires_in) * 1000 };
-  return token.value;
+  tokens.set(c.consumerKey, { value: body.access_token, expiresAt: Date.now() + Number(body.expires_in) * 1000 });
+  return body.access_token;
 }
 
 async function post<T>(c: Config, path: string, body: unknown): Promise<{ status: number; data: T }> {
@@ -79,7 +75,7 @@ export function createDaraja(): MpesaProvider {
     timeoutSeconds: 90,
 
     async stkPush(input) {
-      const c = config();
+      const c = config(input.businessCode);
       const timestamp = darajaTimestamp();
       const { status, data } = await post<{
         MerchantRequestID?: string; CheckoutRequestID?: string; ResponseCode?: string; errorMessage?: string; ResponseDescription?: string;
@@ -103,8 +99,8 @@ export function createDaraja(): MpesaProvider {
       return { providerRequestId: data.CheckoutRequestID, merchantRequestId: data.MerchantRequestID ?? null };
     },
 
-    async query(providerRequestId): Promise<StkOutcome> {
-      const c = config();
+    async query(providerRequestId, businessCode): Promise<StkOutcome> {
+      const c = config(businessCode);
       const timestamp = darajaTimestamp();
       const { data } = await post<{ ResultCode?: string | number; ResultDesc?: string; errorCode?: string }>(
         c,

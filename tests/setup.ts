@@ -51,6 +51,11 @@ for (const key of ['R2_ACCOUNT_ID', 'R2_ACCESS_KEY_ID', 'R2_SECRET_ACCESS_KEY', 
   process.env[key] = '';
 }
 
+// Never use the developer's real Daraja credentials (shared or per business) in tests.
+for (const key of Object.keys(process.env)) {
+  if (/^MPESA_(.+_)?(CONSUMER_KEY|CONSUMER_SECRET|SHORTCODE|PASSKEY|PARTY_B)$/.test(key)) process.env[key] = '';
+}
+
 // M-Pesa: prompts are off unless a test switches them on; the simulator answers quickly.
 process.env.MPESA_MODE = 'off';
 process.env.MPESA_SIM_DELAY_MS = '60';

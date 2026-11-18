@@ -60,3 +60,20 @@ services:
         sync: false
       - key: MPESA_CALLBACK_BASE_URL
         sync: false
+      # One Till per business: the business code (upper case, dashes as underscores) is the prefix.
+      - key: MPESA_GO_FISH_SHORTCODE
+        sync: false
+      - key: MPESA_GO_FISH_PARTY_B
+        sync: false
+      - key: MPESA_GO_FISH_PASSKEY
+        sync: false
+      - key: MPESA_GO_FISH_TRANSACTION_TYPE
+        sync: false
+      - key: MPESA_ENYAKIN_SHORTCODE
+        sync: false
+      - key: MPESA_ENYAKIN_PARTY_B
+        sync: false
+      - key: MPESA_ENYAKIN_PASSKEY
+        sync: false
+      - key: MPESA_ENYAKIN_TRANSACTION_TYPE
+        sync: false

@@ -123,20 +123,41 @@ const envSchema = z.object({
       });
     }
     if (mode === 'daraja') {
-      const missing = (
-        [
-          ['MPESA_CONSUMER_KEY', env.MPESA_CONSUMER_KEY],
-          ['MPESA_CONSUMER_SECRET', env.MPESA_CONSUMER_SECRET],
-          ['MPESA_SHORTCODE', env.MPESA_SHORTCODE],
-          ['MPESA_PASSKEY', env.MPESA_PASSKEY],
-          ['MPESA_CALLBACK_BASE_URL', env.MPESA_CALLBACK_BASE_URL],
-        ] as const
-      ).filter(([, v]) => !v);
-      for (const [name] of missing) {
-        ctx.addIssue({ code: z.ZodIssueCode.custom, path: [name], message: `${name} is required when MPESA_MODE=daraja` });
+      if (!env.MPESA_CALLBACK_BASE_URL) {
+        ctx.addIssue({ code: z.ZodIssueCode.custom, path: ['MPESA_CALLBACK_BASE_URL'], message: 'MPESA_CALLBACK_BASE_URL is required when MPESA_MODE=daraja' });
       }
       if (env.MPESA_CALLBACK_BASE_URL && env.NODE_ENV === 'production' && !env.MPESA_CALLBACK_BASE_URL.startsWith('https://')) {
         ctx.addIssue({ code: z.ZodIssueCode.custom, path: ['MPESA_CALLBACK_BASE_URL'], message: 'Safaricom only calls https addresses' });
+      }
+      // Credentials: one shared set, and/or one set per business (MPESA_<BUSINESS_CODE>_SHORTCODE ...).
+      const shared = [env.MPESA_CONSUMER_KEY, env.MPESA_CONSUMER_SECRET, env.MPESA_SHORTCODE, env.MPESA_PASSKEY].every(Boolean);
+      const prefixes = new Set<string>();
+      for (const key of Object.keys(process.env)) {
+        const m = /^MPESA_(.+)_(SHORTCODE|PASSKEY)$/.exec(key);
+        if (m) prefixes.add(m[1]!);
+      }
+      let anyComplete = shared;
+      for (const p of prefixes) {
+        const get = (n: string) => process.env[`MPESA_${p}_${n}`]?.trim();
+        const missing = [
+          ...(get('SHORTCODE') ? [] : [`MPESA_${p}_SHORTCODE`]),
+          ...(get('PASSKEY') ? [] : [`MPESA_${p}_PASSKEY`]),
+          ...(get('CONSUMER_KEY') || env.MPESA_CONSUMER_KEY ? [] : [`MPESA_${p}_CONSUMER_KEY (or the shared MPESA_CONSUMER_KEY)`]),
+          ...(get('CONSUMER_SECRET') || env.MPESA_CONSUMER_SECRET ? [] : [`MPESA_${p}_CONSUMER_SECRET (or the shared MPESA_CONSUMER_SECRET)`]),
+        ];
+        for (const name of missing) {
+          ctx.addIssue({ code: z.ZodIssueCode.custom, path: [name], message: `${name} is required: MPESA_${p}_* is partly set` });
+        }
+        if (missing.length === 0) anyComplete = true;
+      }
+      if (!anyComplete) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: ['MPESA_SHORTCODE'],
+          message:
+            'MPESA_MODE=daraja needs M-Pesa credentials: MPESA_CONSUMER_KEY, MPESA_CONSUMER_SECRET, MPESA_SHORTCODE and MPESA_PASSKEY, ' +
+            'or a set per business such as MPESA_GO_FISH_SHORTCODE and MPESA_GO_FISH_PASSKEY',
+        });
       }
     }
     const r2 = [env.R2_ACCOUNT_ID, env.R2_ACCESS_KEY_ID, env.R2_SECRET_ACCESS_KEY, env.R2_BUCKET, env.R2_PUBLIC_URL];

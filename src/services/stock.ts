@@ -2,7 +2,7 @@ import { query } from '../config/db';
 import type { TxClient } from '../db/transaction';
 import { AppError } from '../utils/AppError';
 
-export type MovementType = 'opening' | 'purchase' | 'sale' | 'void' | 'adjustment';
+export type MovementType = 'opening' | 'purchase' | 'sale' | 'void' | 'adjustment' | 'new_stock' | 'cold_room';
 
 export interface StockChange {
   businessId: string;

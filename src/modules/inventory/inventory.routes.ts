@@ -25,7 +25,7 @@ const stockQuery = z.object({
 
 const movementsQuery = z.object({
   productId: uuid.optional(),
-  type: z.enum(['opening', 'purchase', 'sale', 'void', 'adjustment']).optional(),
+  type: z.enum(['opening', 'purchase', 'sale', 'void', 'adjustment', 'new_stock', 'cold_room']).optional(),
   from: isoDate.optional(),
   to: isoDate.optional(),
   ...pageQuery,
@@ -38,8 +38,17 @@ const adjustBody = z
     mode: z.enum(['delta', 'set']),
     quantity,
     reason: z.string().trim().min(3, 'Give a short reason').max(200),
+    /**
+     * Where the change came from. "new_stock" and "cold_room" are stock coming IN: they must be a
+     * positive "delta" so they can be tracked (and are never confused with a recount).
+     */
+    source: z.enum(['adjustment', 'new_stock', 'cold_room']).default('adjustment'),
   })
-  .strict();
+  .strict()
+  .refine((b) => b.source === 'adjustment' || (b.mode === 'delta' && b.quantity > 0), {
+    path: ['quantity'],
+    message: 'New stock must be a positive amount to add',
+  });
 
 // Current stock levels (active products only).
 inventoryRouter.get(
@@ -147,10 +156,10 @@ inventoryRouter.post(
       }
       if (delta === 0) throw AppError.badRequest('That is already the current stock');
       await applyStockChange(tx, {
-        businessId, productId: b.productId, quantity: delta, type: 'adjustment', userId, note: b.reason,
+        businessId, productId: b.productId, quantity: delta, type: b.source, userId, note: b.reason,
       });
       await audit(
-        auditFromReq(req, 'stock_adjusted', 'product', b.productId, { mode: b.mode, delta, before: current.quantity, reason: b.reason }),
+        auditFromReq(req, 'stock_adjusted', 'product', b.productId, { mode: b.mode, source: b.source, delta, before: current.quantity, reason: b.reason }),
         tx,
       );
       return getProduct(businessId, b.productId, tx);

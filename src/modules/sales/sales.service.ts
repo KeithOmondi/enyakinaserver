@@ -3,7 +3,7 @@ import { withTransaction } from '../../db/transaction';
 import { audit, type AuditEntry } from '../../services/audit';
 import { applyStockChange } from '../../services/stock';
 import { AppError } from '../../utils/AppError';
-import { mpesaMode } from '../../services/mpesa/types';
+import { mpesaModeFor } from '../../services/mpesa/credentials';
 import { lineTotal } from '../../utils/money';
 
 export type PayMethod = 'cash' | 'mpesa' | 'card';
@@ -123,7 +123,8 @@ export async function checkout(
       // for exactly its amount). A manually typed code is still accepted, because the network
       // can be down, but it is stored unverified and shows up on the closing screen. When
       // prompts are available a manual line must at least carry a code.
-      const promptsOn = mpesaMode() !== 'off';
+      const [bizRow] = await query<{ code: string }>('SELECT code FROM businesses WHERE id = $1', [businessId], tx);
+      const promptsOn = mpesaModeFor(bizRow?.code) !== 'off';
       const claimed = new Set<string>();
       const finalPayments: { method: PayMethod; amountCents: number; reference: string | null; mpesaRequestId: string | null }[] = [];
       for (const p of stored) {

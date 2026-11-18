@@ -245,6 +245,31 @@ describe('purchases and adjustments', () => {
   });
 });
 
+describe('stock-in sources', () => {
+  it('records new stock and cold-room stock under their own types, with before and after balances', async () => {
+    const p = await createProduct(admin, { openingStock: 10 });
+    const a = await as(manager).post('/api/inventory/adjustments').send({ productId: p.id, mode: 'delta', quantity: 5, reason: 'New stock', source: 'new_stock' });
+    const b = await as(manager).post('/api/inventory/adjustments').send({ productId: p.id, mode: 'delta', quantity: 3, reason: 'New from Cold Room', source: 'cold_room' });
+    expect(a.status).toBe(201);
+    expect(b.status).toBe(201);
+    expect(await stockOf(p.id)).toBe(18);
+    const cold = await as(admin).get(`/api/inventory/movements?productId=${p.id}&type=cold_room`);
+    expect(cold.body.items).toHaveLength(1);
+    expect(cold.body.items[0]).toMatchObject({ type: 'cold_room', quantity: 3, balanceAfter: 18 });
+    const fresh = await as(admin).get(`/api/inventory/movements?productId=${p.id}&type=new_stock`);
+    expect(fresh.body.items[0]).toMatchObject({ type: 'new_stock', quantity: 5, balanceAfter: 15 });
+  });
+
+  it('refuses a recount or a removal labelled as new stock', async () => {
+    const p = await createProduct(admin, { openingStock: 10 });
+    const set = await as(manager).post('/api/inventory/adjustments').send({ productId: p.id, mode: 'set', quantity: 4, reason: 'New stock', source: 'new_stock' });
+    const neg = await as(manager).post('/api/inventory/adjustments').send({ productId: p.id, mode: 'delta', quantity: -2, reason: 'New stock', source: 'cold_room' });
+    expect(set.status).toBe(422);
+    expect(neg.status).toBe(422);
+    expect(await stockOf(p.id)).toBe(10);
+  });
+});
+
 describe('closing and reports', () => {
   it('compares counted cash with sales and refuses a second close', async () => {
     await resetDb();
