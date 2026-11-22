@@ -1,11 +1,12 @@
 import { query, type Queryable } from '../../config/db';
-import { withTransaction } from '../../db/transaction';
+import { withTransaction, type TxClient } from '../../db/transaction';
 import { audit, type AuditEntry } from '../../services/audit';
 import { randomUUID } from 'node:crypto';
 import { applyStockChange } from '../../services/stock';
 import { deleteObject, publicUrl, putObject, storageConfigured } from '../../services/storage';
 import { AppError } from '../../utils/AppError';
 import { offsetOf, type Page } from '../../utils/pagination';
+import { internalBarcode, skuFor } from '../../utils/productCodes';
 import { escapeLike } from '../../utils/validators';
 
 export interface Product {
@@ -15,6 +16,9 @@ export interface Product {
   name: string;
   categoryId: string | null;
   categoryName: string | null;
+  /** Set when the product is in a sub-category: the top-level category it belongs to. */
+  parentCategoryId: string | null;
+  parentCategoryName: string | null;
   unit: string;
   allowsFraction: boolean;
   priceCents: number;
@@ -35,12 +39,13 @@ function shape({ imageKey, ...rest }: ProductRow): Product {
 
 /** Shared by products, inventory and reports so "low stock" means one thing everywhere. */
 export const PRODUCT_SELECT = `
-  SELECT p.id, p.sku, p.barcode, p.name, p.category_id, c.name AS category_name, p.unit,
+  SELECT p.id, p.sku, p.barcode, p.name, p.category_id, c.name AS category_name, c.parent_id AS parent_category_id, pc.name AS parent_category_name, p.unit,
          p.allows_fraction, p.price_cents, p.cost_cents, p.reorder_level, p.active, p.image_key,
          s.quantity, (p.reorder_level > 0 AND s.quantity <= p.reorder_level) AS low_stock
     FROM products p
     JOIN stock_levels s ON s.product_id = p.id
-    LEFT JOIN categories c ON c.id = p.category_id`;
+    LEFT JOIN categories c ON c.id = p.category_id
+    LEFT JOIN categories pc ON pc.id = c.parent_id`;
 
 export interface ProductFilter {
   q?: string;
@@ -65,7 +70,11 @@ export async function listProducts(businessId: string, f: ProductFilter): Promis
       `(p.name ILIKE $${params.length - 1} OR p.sku ILIKE $${params.length - 1} OR p.barcode = $${params.length})`,
     );
   }
-  if (f.categoryId) add('p.category_id = ?', f.categoryId);
+  if (f.categoryId) {
+    // A top-level category includes everything in its sub-categories.
+    params.push(f.categoryId);
+    where.push(`p.category_id IN (SELECT id FROM categories WHERE id = $${params.length} OR parent_id = $${params.length})`);
+  }
   if (f.status !== 'all') add('p.active = ?', f.status === 'active');
   if (f.lowStock) where.push('p.reorder_level > 0 AND s.quantity <= p.reorder_level');
 
@@ -94,7 +103,8 @@ async function assertCategory(db: Queryable, businessId: string, categoryId: str
 }
 
 export interface ProductInput {
-  sku: string;
+  /** Normally omitted: the system generates the SKU. */
+  sku?: string | undefined;
   barcode?: string | null;
   name: string;
   categoryId?: string | null;
@@ -105,6 +115,30 @@ export interface ProductInput {
   reorderLevel: number;
 }
 
+/**
+ * Takes the next product number for a business and builds its SKU and barcode from it. Skips a
+ * number whose SKU or barcode is already used (for example a hand-picked SKU from an import).
+ */
+async function nextCodes(tx: TxClient, businessId: string): Promise<{ sku: string; barcode: string }> {
+  for (let attempt = 0; attempt < 20; attempt++) {
+    const [b] = await query<{ code: string; productSeq: number }>(
+      'UPDATE businesses SET product_seq = product_seq + 1 WHERE id = $1 RETURNING code, product_seq',
+      [businessId],
+      tx,
+    );
+    const seq = Number(b!.productSeq);
+    const sku = skuFor(b!.code, seq);
+    const barcode = internalBarcode(seq);
+    const clash = await query(
+      'SELECT 1 FROM products WHERE business_id = $1 AND (lower(sku) = lower($2) OR barcode = $3)',
+      [businessId, sku, barcode],
+      tx,
+    );
+    if (clash.length === 0) return { sku, barcode };
+  }
+  throw AppError.conflict('Could not generate a product code. Try again.');
+}
+
 export async function createProduct(
   businessId: string,
   userId: string,
@@ -113,12 +147,15 @@ export async function createProduct(
 ): Promise<Product> {
   return withTransaction(async (tx) => {
     await assertCategory(tx, businessId, input.categoryId);
+    const codes = await nextCodes(tx, businessId);
+    const sku = input.sku ?? codes.sku;
+    const barcode = input.barcode ?? codes.barcode;
     const [row] = await query<{ id: string }>(
       `INSERT INTO products (business_id, category_id, sku, barcode, name, unit, allows_fraction,
                              price_cents, cost_cents, reorder_level)
        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10) RETURNING id`,
       [
-        businessId, input.categoryId ?? null, input.sku, input.barcode ?? null, input.name,
+        businessId, input.categoryId ?? null, sku, barcode, input.name,
         input.unit, input.allowsFraction, input.priceCents, input.costCents, input.reorderLevel,
       ],
       tx,
@@ -130,7 +167,7 @@ export async function createProduct(
         businessId, productId: id, quantity: input.openingStock, type: 'opening', userId, note: 'Opening stock',
       });
     }
-    await audit({ ...entry, entityId: id, details: { sku: input.sku, name: input.name } }, tx);
+    await audit({ ...entry, entityId: id, details: { sku, name: input.name } }, tx);
     return getProduct(businessId, id, tx);
   });
 }
@@ -147,21 +184,18 @@ export async function updateProduct(
     const has = (k: keyof typeof patch) => k in patch;
     await query(
       `UPDATE products SET
-         sku = COALESCE($3, sku),
-         barcode = CASE WHEN $4::boolean THEN $5 ELSE barcode END,
-         name = COALESCE($6, name),
-         category_id = CASE WHEN $7::boolean THEN $8::uuid ELSE category_id END,
-         unit = COALESCE($9, unit),
-         allows_fraction = COALESCE($10, allows_fraction),
-         price_cents = COALESCE($11, price_cents),
-         cost_cents = COALESCE($12, cost_cents),
-         reorder_level = COALESCE($13, reorder_level),
-         active = COALESCE($14, active),
+         name = COALESCE($3, name),
+         category_id = CASE WHEN $4::boolean THEN $5::uuid ELSE category_id END,
+         unit = COALESCE($6, unit),
+         allows_fraction = COALESCE($7, allows_fraction),
+         price_cents = COALESCE($8, price_cents),
+         cost_cents = COALESCE($9, cost_cents),
+         reorder_level = COALESCE($10, reorder_level),
+         active = COALESCE($11, active),
          updated_at = now()
        WHERE id = $1 AND business_id = $2`,
       [
-        id, businessId, patch.sku ?? null,
-        has('barcode'), patch.barcode ?? null,
+        id, businessId,
         patch.name ?? null,
         has('categoryId'), patch.categoryId ?? null,
         patch.unit ?? null, patch.allowsFraction ?? null, patch.priceCents ?? null,

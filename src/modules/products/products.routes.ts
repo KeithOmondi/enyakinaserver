@@ -23,7 +23,8 @@ const listQuery = z.object({
 });
 
 const productFields = {
-  sku: z.string().trim().min(1).max(40),
+  /** Optional: the system generates the SKU and barcode. Only integrations/imports supply their own. */
+  sku: z.string().trim().min(1).max(40).optional(),
   barcode: optionalText(64),
   name: z.string().trim().min(1).max(160),
   categoryId: uuid.nullable().optional(),
@@ -37,8 +38,7 @@ const productFields = {
 const createBody = z.object({ ...productFields, openingStock: nonNegativeQuantity.default(0) }).strict();
 const updateBody = z
   .object({
-    sku: productFields.sku.optional(),
-    barcode: productFields.barcode,
+    // sku and barcode are generated once and never edited.
     name: productFields.name.optional(),
     categoryId: productFields.categoryId,
     unit: z.string().trim().min(1).max(20).optional(),

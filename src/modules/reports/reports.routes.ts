@@ -82,15 +82,16 @@ reportsRouter.get(
   '/stock-valuation',
   asyncHandler(async (req, res) => {
     const items = await query(
-      `SELECT c.name AS category_name, count(*) AS products,
+      `SELECT COALESCE(pc.name, c.name) AS category_name, count(*) AS products,
               COALESCE(sum(s.quantity), 0) AS units,
               COALESCE(sum(round(s.quantity * p.cost_cents)), 0)::bigint AS cost_value_cents,
               COALESCE(sum(round(s.quantity * p.price_cents)), 0)::bigint AS retail_value_cents
          FROM products p
          JOIN stock_levels s ON s.product_id = p.id
          LEFT JOIN categories c ON c.id = p.category_id
+         LEFT JOIN categories pc ON pc.id = c.parent_id
         WHERE p.business_id = $1 AND p.active
-        GROUP BY c.name ORDER BY c.name NULLS LAST`,
+        GROUP BY COALESCE(pc.name, c.name) ORDER BY COALESCE(pc.name, c.name) NULLS LAST`,
       [ctx(req).businessId],
     );
     res.json({ items });
