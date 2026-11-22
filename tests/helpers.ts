@@ -57,6 +57,7 @@ export async function login(email: string, businessId: string, password = 'corre
 export const as = (s: Session) => ({
   get: (url: string) => request(app).get(url).set('Authorization', `Bearer ${s.accessToken}`).set('X-Business-Id', s.businessId),
   post: (url: string) => request(app).post(url).set('Authorization', `Bearer ${s.accessToken}`).set('X-Business-Id', s.businessId),
+  put: (url: string) => request(app).put(url).set('Authorization', `Bearer ${s.accessToken}`).set('X-Business-Id', s.businessId),
   patch: (url: string) => request(app).patch(url).set('Authorization', `Bearer ${s.accessToken}`).set('X-Business-Id', s.businessId),
   delete: (url: string) => request(app).delete(url).set('Authorization', `Bearer ${s.accessToken}`).set('X-Business-Id', s.businessId),
 });

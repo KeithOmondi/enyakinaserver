@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it } from 'vitest';
-import { credsFor, mpesaModeFor, prefixFor } from '../src/services/mpesa/credentials';
+import { credsFor, prefixFor } from '../src/services/mpesa/credentials';
 
 const KEYS = [
   'MPESA_MODE',
@@ -44,13 +44,4 @@ describe('per-business M-Pesa credentials', () => {
     expect(credsFor('enyakin')).toBeNull();
   });
 
-  it('turns prompts off for a business whose Till is not set up, even in daraja mode', () => {
-    process.env.MPESA_MODE = 'daraja';
-    process.env.MPESA_ENYAKIN_SHORTCODE = '222222';
-    process.env.MPESA_ENYAKIN_PASSKEY = 'eny-passkey';
-    process.env.MPESA_ENYAKIN_CONSUMER_KEY = 'k';
-    process.env.MPESA_ENYAKIN_CONSUMER_SECRET = 's';
-    expect(mpesaModeFor('enyakin')).toBe('daraja');
-    expect(mpesaModeFor('go-fish')).toBe('off');
-  });
 });

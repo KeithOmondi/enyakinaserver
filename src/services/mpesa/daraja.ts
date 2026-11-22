@@ -1,5 +1,5 @@
 import { env } from '../../config/env';
-import { credsFor } from './credentials';
+import { credsFor, resolveCreds } from './credentials';
 import { AppError } from '../../utils/AppError';
 import { outcomeFromResult, type MpesaProvider, type StkOutcome } from './types';
 
@@ -20,10 +20,24 @@ interface Config {
   baseUrl: string;
 }
 
-function config(businessCode?: string): Config {
-  const c = credsFor(businessCode);
+async function config(businessId?: string): Promise<Config> {
+  const c = businessId ? await resolveCreds(businessId) : credsFor(undefined);
   if (!c) throw new AppError(409, 'CONFLICT', 'M-Pesa prompts are not set up for this business yet');
   return { ...c, baseUrl: BASE[env.MPESA_ENV] };
+}
+
+/** Asks Safaricom for an access token: proves the consumer key and secret work, moves no money. */
+export async function checkCredentials(c: { consumerKey: string; consumerSecret: string }): Promise<{ ok: boolean; message: string }> {
+  try {
+    const res = await fetch(`${BASE[env.MPESA_ENV]}/oauth/v1/generate?grant_type=client_credentials`, {
+      headers: { Authorization: `Basic ${Buffer.from(`${c.consumerKey}:${c.consumerSecret}`).toString('base64')}` },
+      signal: AbortSignal.timeout(15_000),
+    });
+    if (res.ok) return { ok: true, message: `Safaricom accepted the key and secret (${env.MPESA_ENV}).` };
+    return { ok: false, message: `Safaricom rejected the key and secret (HTTP ${res.status}). Check they are the ${env.MPESA_ENV} ones.` };
+  } catch {
+    return { ok: false, message: 'Could not reach Safaricom. Try again in a moment.' };
+  }
 }
 
 /** YYYYMMDDHHmmss in East Africa Time, as Daraja expects. */
@@ -75,7 +89,7 @@ export function createDaraja(): MpesaProvider {
     timeoutSeconds: 90,
 
     async stkPush(input) {
-      const c = config(input.businessCode);
+      const c = await config(input.businessId);
       const timestamp = darajaTimestamp();
       const { status, data } = await post<{
         MerchantRequestID?: string; CheckoutRequestID?: string; ResponseCode?: string; errorMessage?: string; ResponseDescription?: string;
@@ -99,8 +113,8 @@ export function createDaraja(): MpesaProvider {
       return { providerRequestId: data.CheckoutRequestID, merchantRequestId: data.MerchantRequestID ?? null };
     },
 
-    async query(providerRequestId, businessCode): Promise<StkOutcome> {
-      const c = config(businessCode);
+    async query(providerRequestId, businessId): Promise<StkOutcome> {
+      const c = await config(businessId);
       const timestamp = darajaTimestamp();
       const { data } = await post<{ ResultCode?: string | number; ResultDesc?: string; errorCode?: string }>(
         c,

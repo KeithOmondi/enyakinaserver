@@ -7,7 +7,7 @@ import { audit, type AuditEntry } from '../../services/audit';
 import { createDaraja } from '../../services/mpesa/daraja';
 import { maskPhone, normalizePhone } from '../../services/mpesa/phone';
 import { createSimulator } from '../../services/mpesa/simulator';
-import { mpesaModeFor } from '../../services/mpesa/credentials';
+import { mpesaModeForBusiness } from '../../services/mpesa/credentials';
 import { mpesaMode, outcomeFromResult, type MpesaProvider, type StkOutcome } from '../../services/mpesa/types';
 import { AppError } from '../../utils/AppError';
 import { offsetOf } from '../../utils/pagination';
@@ -36,14 +36,9 @@ const MAX_KES = 250_000; // M-Pesa's per-transaction ceiling
 
 let cache: { mode: string; provider: MpesaProvider } | null = null;
 
-export async function businessCodeOf(businessId: string): Promise<string | undefined> {
-  const [b] = await query<{ code: string }>('SELECT code FROM businesses WHERE id = $1', [businessId]);
-  return b?.code;
-}
-
 /** The payment mode for one business: its own Till must be set up for prompts to be on. */
 export async function modeForBusiness(businessId: string) {
-  return mpesaModeFor(await businessCodeOf(businessId));
+  return mpesaModeForBusiness(businessId);
 }
 
 export function getProvider(): MpesaProvider | null {
@@ -146,8 +141,7 @@ export async function createRequest(
   input: { phone: string; amountCents: number; requestKey?: string | undefined },
   entry: AuditEntry,
 ) {
-  const businessCode = await businessCodeOf(businessId);
-  const provider = mpesaModeFor(businessCode) === 'off' ? null : getProvider();
+  const provider = (await mpesaModeForBusiness(businessId)) === 'off' ? null : getProvider();
   if (!provider) throw AppError.conflict('M-Pesa prompts are not turned on for this business');
 
   const phone = normalizePhone(input.phone);
@@ -183,7 +177,7 @@ export async function createRequest(
       accountRef: (biz?.name ?? 'Payment').slice(0, 12),
       description: 'Payment',
       callbackUrl: callbackUrl(row.id),
-      businessCode,
+      businessId,
     });
     await query('UPDATE mpesa_requests SET provider_request_id = $2, merchant_request_id = $3 WHERE id = $1', [
       row.id, sent.providerRequestId, sent.merchantRequestId,
@@ -209,8 +203,7 @@ export async function getRequest(businessId: string, id: string) {
     const expired = row.expiresAt.getTime() <= Date.now();
     const ageMs = Date.now() - row.createdAt.getTime();
     if (provider && row.providerRequestId && (expired || ageMs > 15_000)) {
-      const businessCode = await businessCodeOf(businessId);
-      const outcome = await provider.query(row.providerRequestId, businessCode).catch(() => ({ state: 'pending' }) as StkOutcome);
+      const outcome = await provider.query(row.providerRequestId, businessId).catch(() => ({ state: 'pending' }) as StkOutcome);
       if (outcome.state !== 'pending') row = (await applyOutcome({ id }, outcome)) ?? row;
     }
     if (row.status === 'pending' && expired) {

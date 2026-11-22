@@ -1,13 +1,14 @@
 import { Router } from 'express';
 import rateLimit from 'express-rate-limit';
 import { z } from 'zod';
-import { isTest } from '../../config/env';
+import { env, isTest } from '../../config/env';
 import { ctx, requireRole, tenantAuth } from '../../middleware/auth';
 import { validate } from '../../middleware/validate';
 import { auditFromReq } from '../../services/audit';
 import { asyncHandler } from '../../utils/asyncHandler';
 import { pageQuery, queryBool, uuid } from '../../utils/pagination';
 import * as service from './mpesa.service';
+import * as settings from './mpesa.settings.service';
 
 export const mpesaRouter = Router();
 
@@ -52,6 +53,76 @@ const listQuery = z.object({
 mpesaRouter.get('/mode', ...tenantAuth, asyncHandler(async (req, res) => {
   res.json({ mode: await service.modeForBusiness(ctx(req).businessId) });
 }));
+
+// ---- connection settings (entered in the dashboard) ---------------------------------------------
+// Secrets are write-only: they are encrypted on the way in and never sent back.
+
+const settingsLimiter = rateLimit({
+  windowMs: 60_000,
+  limit: 15,
+  standardHeaders: 'draft-7',
+  legacyHeaders: false,
+  skip: () => isTest,
+  message: { error: { code: 'RATE_LIMITED', message: 'Too many attempts. Wait a moment.' } },
+});
+const settingsRole = () => requireRole(env.MPESA_SETTINGS_REQUIRE_SUPER_ADMIN ? 'super_admin' : 'admin');
+const digits = z.string().trim().regex(/^\d{4,10}$/, 'Digits only, 4 to 10 long');
+const settingsBody = z
+  .object({
+    enabled: z.boolean(),
+    transactionType: z.enum(['till', 'paybill']),
+    shortcode: digits,
+    partyB: digits.nullable().optional(),
+    passkey: z.string().trim().min(20, 'That passkey looks too short').max(300).optional(),
+    consumerKey: z.string().trim().min(10, 'That key looks too short').max(200).optional(),
+    consumerSecret: z.string().trim().min(10, 'That secret looks too short').max(300).optional(),
+    password: z.string().min(1, 'Enter your password to confirm').max(200),
+  })
+  .strict();
+const passwordBody = z.object({ password: z.string().min(1).max(200) }).strict();
+
+mpesaRouter.get(
+  '/settings',
+  ...tenantAuth,
+  settingsRole(),
+  asyncHandler(async (req, res) => {
+    res.json(await settings.getSettings(ctx(req).businessId));
+  }),
+);
+
+mpesaRouter.put(
+  '/settings',
+  settingsLimiter,
+  ...tenantAuth,
+  settingsRole(),
+  validate({ body: settingsBody }),
+  asyncHandler(async (req, res) => {
+    const { businessId, userId } = ctx(req);
+    res.json(await settings.saveSettings(businessId, userId, req.body as z.infer<typeof settingsBody>, auditFromReq(req, 'mpesa_settings_updated', 'business')));
+  }),
+);
+
+mpesaRouter.post(
+  '/settings/remove',
+  settingsLimiter,
+  ...tenantAuth,
+  settingsRole(),
+  validate({ body: passwordBody }),
+  asyncHandler(async (req, res) => {
+    const { businessId, userId } = ctx(req);
+    res.json(await settings.deleteSettings(businessId, userId, (req.body as z.infer<typeof passwordBody>).password, auditFromReq(req, 'mpesa_settings_removed', 'business')));
+  }),
+);
+
+mpesaRouter.post(
+  '/settings/test',
+  settingsLimiter,
+  ...tenantAuth,
+  settingsRole(),
+  asyncHandler(async (req, res) => {
+    res.json(await settings.testSettings(ctx(req).businessId));
+  }),
+);
 
 // Admin log: every prompt, with "paid but not on any sale" flagged.
 mpesaRouter.get(

@@ -43,6 +43,13 @@ services:
         sync: false
       - key: R2_PUBLIC_URL
         sync: false
+      # Encrypts M-Pesa keys that admins save in the dashboard. Generate once and never change or lose it:
+      #   node -e "console.log(require('crypto').randomBytes(48).toString('hex'))"
+      - key: SETTINGS_ENCRYPTION_KEY
+        sync: false
+      # Set to true so only a super admin (not every admin) can change a business's M-Pesa settings.
+      - key: MPESA_SETTINGS_REQUIRE_SUPER_ADMIN
+        sync: false
       # M-Pesa prompts (leave MPESA_MODE unset to keep them off)
       - key: MPESA_MODE
         sync: false

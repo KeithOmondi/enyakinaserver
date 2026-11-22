@@ -56,6 +56,8 @@ for (const key of Object.keys(process.env)) {
   if (/^MPESA_(.+_)?(CONSUMER_KEY|CONSUMER_SECRET|SHORTCODE|PASSKEY|PARTY_B)$/.test(key)) process.env[key] = '';
 }
 
+process.env.SETTINGS_ENCRYPTION_KEY = 'test-only-settings-encryption-key-0123456789';
+
 // M-Pesa: prompts are off unless a test switches them on; the simulator answers quickly.
 process.env.MPESA_MODE = 'off';
 process.env.MPESA_SIM_DELAY_MS = '60';

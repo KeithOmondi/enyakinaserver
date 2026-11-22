@@ -64,6 +64,11 @@ const envSchema = z.object({
   MPESA_SIM_DELAY_MS: z.coerce.number().int().min(0).default(4000),
   MPESA_SIM_TIMEOUT_SECONDS: z.coerce.number().int().positive().default(25),
 
+  /** Encrypts M-Pesa keys that admins save in the dashboard. Keep it only here; losing it means re-entering them. */
+  SETTINGS_ENCRYPTION_KEY: optional(z.string().min(32, 'SETTINGS_ENCRYPTION_KEY must be at least 32 characters')),
+  /** When true only a super admin may change a business's M-Pesa settings; otherwise any admin of it (with their password). */
+  MPESA_SETTINGS_REQUIRE_SUPER_ADMIN: boolString.default('false'),
+
   // Cloudflare R2 (product photos). All five or none.
   R2_ACCOUNT_ID: optional(
     z
@@ -150,15 +155,8 @@ const envSchema = z.object({
         }
         if (missing.length === 0) anyComplete = true;
       }
-      if (!anyComplete) {
-        ctx.addIssue({
-          code: z.ZodIssueCode.custom,
-          path: ['MPESA_SHORTCODE'],
-          message:
-            'MPESA_MODE=daraja needs M-Pesa credentials: MPESA_CONSUMER_KEY, MPESA_CONSUMER_SECRET, MPESA_SHORTCODE and MPESA_PASSKEY, ' +
-            'or a set per business such as MPESA_GO_FISH_SHORTCODE and MPESA_GO_FISH_PASSKEY',
-        });
-      }
+      // No complete environment credentials is allowed: admins can enter them in the dashboard.
+      void anyComplete;
     }
     const r2 = [env.R2_ACCOUNT_ID, env.R2_ACCESS_KEY_ID, env.R2_SECRET_ACCESS_KEY, env.R2_BUCKET, env.R2_PUBLIC_URL];
     if (r2.some(Boolean) && !r2.every(Boolean)) {

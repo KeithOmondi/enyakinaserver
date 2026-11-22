@@ -1,4 +1,6 @@
+import { query } from '../../config/db';
 import { env } from '../../config/env';
+import { decryptSecret } from '../../utils/secretbox';
 import { mpesaMode, type MpesaMode } from './types';
 
 /**
@@ -30,11 +32,11 @@ const own = (businessCode: string | undefined, name: string): string | undefined
   return process.env[`MPESA_${prefixFor(businessCode)}_${name}`]?.trim() || undefined;
 };
 
-export function credsFor(businessCode?: string): DarajaCreds | null {
+export function credsFor(businessCode?: string, othersHaveOwn = false): DarajaCreds | null {
   const ownShortcode = own(businessCode, 'SHORTCODE');
   // Once ANY business has its own Till configured, a business without one gets NO prompts. It must
   // never fall back to the shared shortcode, or its customers' money would land in another Till.
-  if (!ownShortcode && businessCode && configuredPrefixes().length > 0) return null;
+  if (!ownShortcode && businessCode && (othersHaveOwn || configuredPrefixes().length > 0)) return null;
   const shortcode = ownShortcode ?? env.MPESA_SHORTCODE;
   // The passkey belongs to a specific shortcode: only borrow the shared one with the shared shortcode.
   const passkey = ownShortcode ? own(businessCode, 'PASSKEY') : env.MPESA_PASSKEY;
@@ -47,10 +49,78 @@ export function credsFor(businessCode?: string): DarajaCreds | null {
   return { consumerKey, consumerSecret, shortcode, passkey, partyB, type };
 }
 
-/** The mode for one business: in daraja mode a business without complete credentials has prompts off. */
-export function mpesaModeFor(businessCode?: string): MpesaMode {
+// ---- dashboard settings (stored in the database) ------------------------------------------------
+
+interface SettingsRow {
+  businessId: string;
+  enabled: boolean;
+  transactionType: 'till' | 'paybill';
+  shortcode: string;
+  partyB: string | null;
+  passkeyEnc: string;
+  consumerKeyEnc: string | null;
+  consumerSecretEnc: string | null;
+}
+
+const TTL_MS = 30_000;
+let rowCache = new Map<string, { at: number; row: SettingsRow | null }>();
+let anyCache: { at: number; value: boolean } | null = null;
+
+/** Call after the settings change so the new values apply immediately. */
+export function clearCredentialCache(): void {
+  rowCache = new Map();
+  anyCache = null;
+}
+
+export async function loadSettingsRow(businessId: string): Promise<SettingsRow | null> {
+  const hit = rowCache.get(businessId);
+  if (hit && Date.now() - hit.at < TTL_MS) return hit.row;
+  const [row] = await query<SettingsRow>(
+    `SELECT business_id, enabled, transaction_type, shortcode, party_b, passkey_enc, consumer_key_enc, consumer_secret_enc
+       FROM mpesa_settings WHERE business_id = $1`,
+    [businessId],
+  );
+  rowCache.set(businessId, { at: Date.now(), row: row ?? null });
+  return row ?? null;
+}
+
+async function anyDashboardSettings(): Promise<boolean> {
+  if (anyCache && Date.now() - anyCache.at < TTL_MS) return anyCache.value;
+  const [r] = await query<{ n: number }>('SELECT count(*)::int AS n FROM mpesa_settings');
+  anyCache = { at: Date.now(), value: (r?.n ?? 0) > 0 };
+  return anyCache.value;
+}
+
+/**
+ * The Daraja credentials a business pays through. Dashboard settings win; otherwise the
+ * environment (per-business MPESA_<CODE>_* values, or the shared MPESA_* when no business has
+ * its own). Returns null when the business has none, or has switched prompts off.
+ */
+export async function resolveCreds(businessId: string): Promise<DarajaCreds | null> {
+  const row = await loadSettingsRow(businessId);
+  if (row) {
+    if (!row.enabled) return null;
+    const consumerKey = row.consumerKeyEnc ? decryptSecret(row.consumerKeyEnc) : env.MPESA_CONSUMER_KEY;
+    const consumerSecret = row.consumerSecretEnc ? decryptSecret(row.consumerSecretEnc) : env.MPESA_CONSUMER_SECRET;
+    if (!consumerKey || !consumerSecret) return null;
+    return {
+      consumerKey,
+      consumerSecret,
+      shortcode: row.shortcode,
+      passkey: decryptSecret(row.passkeyEnc),
+      type: row.transactionType,
+      partyB: row.transactionType === 'till' ? (row.partyB ?? row.shortcode) : row.shortcode,
+    };
+  }
+  const [b] = await query<{ code: string }>('SELECT code FROM businesses WHERE id = $1', [businessId]);
+  return credsFor(b?.code, await anyDashboardSettings());
+}
+
+/** The mode for one business: in daraja mode a business without usable credentials has prompts off. */
+export async function mpesaModeForBusiness(businessId: string): Promise<MpesaMode> {
   const mode = mpesaMode();
-  return mode === 'daraja' && !credsFor(businessCode) ? 'off' : mode;
+  if (mode !== 'daraja') return mode;
+  return (await resolveCreds(businessId).catch(() => null)) ? 'daraja' : 'off';
 }
 
 /** Business-code prefixes that have their own M-Pesa settings in the environment. */

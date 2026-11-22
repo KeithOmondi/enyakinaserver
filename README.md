@@ -43,6 +43,7 @@ Admins see every prompt, and any that were paid but never reached a sale, under 
 
 - Development works out of the box with `MPESA_MODE=simulator` (no Safaricom account needed). See `.env.example` for the simulator's test numbers.
 - Live: set `MPESA_MODE=daraja` and the `MPESA_*` values (sandbox first). Safaricom must be able to reach `MPESA_CALLBACK_BASE_URL` over https.
+- Keys in the dashboard: set `SETTINGS_ENCRYPTION_KEY` (and `MPESA_MODE=daraja`), then an admin enters each business's Paybill/Till, passkey and Daraja keys under M-Pesa in the admin app. They are encrypted at rest, never shown again, changes need the admin's password and are audited. Dashboard settings win over the environment values below for that business.
 - One Till per business: set `MPESA_<BUSINESS_CODE>_SHORTCODE`, `_PASSKEY`, `_PARTY_B` and `_TRANSACTION_TYPE` (for example `MPESA_GO_FISH_SHORTCODE`, `MPESA_ENYAKIN_PASSKEY`). The consumer key and secret may be shared. A business without its own settings has prompts off and takes typed codes.
 - One set of M-Pesa credentials is used for the whole system. Separate tills for Go-fish and Enyakin would need per-business settings (not built yet).
 

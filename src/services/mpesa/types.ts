@@ -25,7 +25,7 @@ export interface StkPushInput {
   description: string;
   callbackUrl: string;
   /** Which business is being paid, so it can use its own Till. */
-  businessCode?: string | undefined;
+  businessId?: string | undefined;
 }
 
 export interface StkPushResult {
@@ -44,7 +44,7 @@ export interface MpesaProvider {
   timeoutSeconds: number;
   stkPush(input: StkPushInput): Promise<StkPushResult>;
   /** Asks the provider what happened to a prompt (used when a callback never arrived). */
-  query(providerRequestId: string, businessCode?: string): Promise<StkOutcome>;
+  query(providerRequestId: string, businessId?: string): Promise<StkOutcome>;
 }
 
 /** Maps a Safaricom ResultCode to an outcome. 0 = paid, 1032 = customer cancelled. */
